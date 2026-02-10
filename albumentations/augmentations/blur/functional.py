@@ -14,14 +14,23 @@ from warnings import warn
 
 import cv2
 import numpy as np
-from albucore import clipped, float32_io, maybe_process_in_chunks, preserve_channel_dim, uint8_io
+from albucore import (
+    MAX_OPENCV_WORKING_CHANNELS,
+    clipped,
+    float32_io,
+    from_float,
+    maybe_process_in_chunks,
+    preserve_channel_dim,
+    to_float,
+    uint8_io,
+)
 from pydantic import ValidationInfo
 
 from albumentations.augmentations.geometric.functional import scale
 from albumentations.augmentations.pixel.functional import convolve
 from albumentations.core.type_definitions import EIGHT, ImageType
 
-__all__ = ["box_blur", "central_zoom", "defocus", "glass_blur", "median_blur", "zoom_blur"]
+__all__ = ["box_blur", "central_zoom", "defocus", "glass_blur", "median_blur", "median_blur_images", "zoom_blur"]
 
 
 @preserve_channel_dim
@@ -59,6 +68,45 @@ def median_blur(img: ImageType, ksize: int) -> ImageType:
     """
     blur_fn = maybe_process_in_chunks(cv2.medianBlur, ksize=ksize)
     return blur_fn(img)
+
+
+def median_blur_images(images: ImageType, ksize: int) -> ImageType:
+    """Apply median blur to a batch of images.
+
+    Uses cv2.medianBlur dst argument to write directly into a pre-allocated
+    output array for images with <= 4 channels. Falls back to
+    maybe_process_in_chunks for > 4 channels. Dtype conversion is performed
+    once for the entire batch.
+
+    Args:
+        images: Batch of images of shape (N, H, W) or (N, H, W, C).
+        ksize: Kernel size (must be odd).
+
+    Returns:
+        Batch of median blurred images with the same shape as input.
+        uint8 input returns uint8; float32 input returns float32.
+
+    """
+    input_dtype = images.dtype
+
+    if input_dtype != np.uint8:
+        images = from_float(images, target_dtype=np.uint8)
+
+    num_channels = images.shape[-1] if images.ndim == 4 else 1
+    result = np.empty_like(images)
+
+    if num_channels <= MAX_OPENCV_WORKING_CHANNELS:
+        for i, img in enumerate(images):
+            cv2.medianBlur(img, ksize, dst=result[i])
+    else:
+        blur_fn = maybe_process_in_chunks(cv2.medianBlur, ksize=ksize)
+        for i, img in enumerate(images):
+            result[i] = blur_fn(img)
+
+    if input_dtype != np.uint8:
+        return to_float(result)
+
+    return result
 
 
 @preserve_channel_dim
@@ -185,7 +233,7 @@ def zoom_blur(img: ImageType, zoom_factors: np.ndarray | Sequence[int]) -> Image
     for zoom_factor in zoom_factors:
         out += central_zoom(img, zoom_factor)
 
-    return (img + out) / (len(zoom_factors) + 1)
+    return (img + out) * np.float32(1.0 / (len(zoom_factors) + 1))
 
 
 def _ensure_min_value(result: tuple[int, int], min_value: int, field_name: str | None) -> tuple[int, int]:

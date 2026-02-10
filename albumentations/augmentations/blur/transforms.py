@@ -566,6 +566,9 @@ class MedianBlur(Blur):
     def apply(self, img: ImageType, kernel: int, **params: Any) -> ImageType:
         return fblur.median_blur(img, kernel)
 
+    def apply_to_images(self, images: ImageType, kernel: int, **params: Any) -> ImageType:
+        return fblur.median_blur_images(images, kernel)
+
 
 class GaussianBlur(ImageOnlyTransform):
     """Apply Gaussian blur to the input image using a randomly sized kernel.
@@ -1484,6 +1487,12 @@ class ZoomBlur(ImageOnlyTransform):
         **params: Any,
     ) -> ImageType:
         return fblur.zoom_blur(img, zoom_factors)
+
+    def apply_to_images(self, images: ImageType, **params: Any) -> ImageType:
+        result = np.empty_like(images)
+        for i, image in enumerate(images):
+            result[i] = self.apply(image, **params)
+        return result
 
     def get_params(self) -> dict[str, Any]:
         step_factor = self.py_random.uniform(*self.step_factor)
